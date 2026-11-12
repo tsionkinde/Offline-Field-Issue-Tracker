@@ -56,3 +56,35 @@ export async function syncPendingReports() {
   // Return the latest local data after synchronization.
   return getAllReports();
 }
+
+// Get a report and its activity history from the server.
+export async function getReportDetails(id) {
+  const response = await fetch(`${API_URL}/reports/${id}`);
+
+  if (!response.ok) {
+    throw new Error("Could not load report details");
+  }
+
+  const result = await response.json();
+
+  return result.data;
+}
+
+// Update a report's business status.
+export async function updateReportStatus(id, status) {
+  const response = await fetch(`${API_URL}/reports/${id}/status`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ status }),
+  });
+
+  const result = await response.json();
+
+  if (!response.ok) {
+    throw new Error(result.message || "Could not update report status");
+  }
+
+  return result.data;
+}

@@ -1,7 +1,10 @@
-
 import { useEffect, useState } from "react";
 import { getAllReports, saveReport } from "./db/reportDB";
-import { syncPendingReports } from "./services/reportService";
+import {
+  syncPendingReports,
+  getReportDetails,
+  updateReportStatus,
+} from "./services/reportService";
 import {
   LayoutDashboard,
   ClipboardList,
@@ -56,44 +59,47 @@ function App() {
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
- 
-useEffect(() => {
-  async function loadAndSyncReports() {
-    try {
-      // Load local reports first, even if offline.
-      const savedReports = await getAllReports();
-      setReports(savedReports);
+  const [selectedReport, setSelectedReport] = useState(null);
+  const [reportActivities, setReportActivities] = useState([]);
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [statusError, setStatusError] = useState("");
 
-      // If internet is available, synchronize them.
-      if (navigator.onLine) {
-        const updatedReports = await syncPendingReports();
-        setReports(updatedReports);
+  useEffect(() => {
+    async function loadAndSyncReports() {
+      try {
+        // Load local reports first, even if offline.
+        const savedReports = await getAllReports();
+        setReports(savedReports);
+
+        // If internet is available, synchronize them.
+        if (navigator.onLine) {
+          const updatedReports = await syncPendingReports();
+          setReports(updatedReports);
+        }
+      } catch (error) {
+        console.error("Could not load reports:", error);
       }
-    } catch (error) {
-      console.error("Could not load reports:", error);
     }
-  }
 
-  function handleOnline() {
-    syncPendingReports()
-      .then((updatedReports) => {
-        setReports(updatedReports);
-      })
-      .catch((error) => {
-        console.error("Automatic synchronization failed:", error);
-      });
-  }
+    function handleOnline() {
+      syncPendingReports()
+        .then((updatedReports) => {
+          setReports(updatedReports);
+        })
+        .catch((error) => {
+          console.error("Automatic synchronization failed:", error);
+        });
+    }
 
-  loadAndSyncReports();
+    loadAndSyncReports();
 
-  // Try synchronization whenever internet returns.
-  window.addEventListener("online", handleOnline);
+    // Try synchronization whenever internet returns.
+    window.addEventListener("online", handleOnline);
 
-  return () => {
-    window.removeEventListener("online", handleOnline);
-  };
-}, []);
-
+    return () => {
+      window.removeEventListener("online", handleOnline);
+    };
+  }, []);
 
   const [formData, setFormData] = useState({
     category: "Water Supply",
@@ -111,44 +117,42 @@ useEffect(() => {
     }));
   }
 
- 
-async function handleSubmit(event) {
-  event.preventDefault();
+  async function handleSubmit(event) {
+    event.preventDefault();
 
-  const newReport = {
-    id: crypto.randomUUID(),
-    ...formData,
-    status: "Submitted",
-    syncStatus: "Pending",
-    reportedAt: new Date().toISOString(),
-  };
+    const newReport = {
+      id: crypto.randomUUID(),
+      ...formData,
+      status: "Submitted",
+      syncStatus: "Pending",
+      reportedAt: new Date().toISOString(),
+    };
 
-  try {
-    // First, save the report in the browser database.
-await saveReport(newReport);
+    try {
+      // First, save the report in the browser database.
+      await saveReport(newReport);
 
-setReports((previous) => [newReport, ...previous]);
+      setReports((previous) => [newReport, ...previous]);
 
-// Try sending the report immediately if internet is available.
-if (navigator.onLine) {
-  const updatedReports = await syncPendingReports();
-  setReports(updatedReports);
-}
+      // Try sending the report immediately if internet is available.
+      if (navigator.onLine) {
+        const updatedReports = await syncPendingReports();
+        setReports(updatedReports);
+      }
 
-    setFormData({
-      category: "Water Supply",
-      description: "",
-      location: "",
-      priority: "Medium",
-    });
+      setFormData({
+        category: "Water Supply",
+        description: "",
+        location: "",
+        priority: "Medium",
+      });
 
-    setShowForm(false);
-  } catch (error) {
-    console.error("Could not save report:", error);
-    alert("The report could not be saved. Please try again.");
+      setShowForm(false);
+    } catch (error) {
+      console.error("Could not save report:", error);
+      alert("The report could not be saved. Please try again.");
+    }
   }
-}
-
 
   const filteredReports = reports.filter((report) => {
     const matchesSearch =
@@ -156,19 +160,79 @@ if (navigator.onLine) {
       report.location.toLowerCase().includes(search.toLowerCase()) ||
       report.category.toLowerCase().includes(search.toLowerCase());
 
-    const matchesFilter =
-      filter === "All" || report.status === filter;
+    const matchesFilter = filter === "All" || report.status === filter;
 
     return matchesSearch && matchesFilter;
   });
 
   const pendingCount = reports.filter(
-    (report) => report.syncStatus === "Pending"
+    (report) => report.syncStatus === "Pending",
   ).length;
 
   const resolvedCount = reports.filter(
-    (report) => report.status === "Resolved"
+    (report) => report.status === "Resolved",
   ).length;
+
+  async function openReportDetails(report) {
+    setSelectedReport(report);
+    setReportActivities([]);
+    setStatusError("");
+
+    try {
+      const details = await getReportDetails(report.id);
+
+      setSelectedReport({
+        ...report,
+        status: details.status,
+      });
+
+      setReportActivities(details.activities || []);
+    } catch (error) {
+      console.error("Could not load report details:", error);
+      setStatusError(
+        "Could not load server details. Check your internet connection.",
+      );
+    }
+  }
+
+  async function handleStatusUpdate(event) {
+    const newStatus = event.target.value;
+
+    if (!newStatus || !selectedReport) return;
+
+    setStatusLoading(true);
+    setStatusError("");
+
+    try {
+      // Ask the backend to validate and save the new status.
+      await updateReportStatus(selectedReport.id, newStatus);
+
+      // Refresh report details and its activity history.
+      const details = await getReportDetails(selectedReport.id);
+
+      const updatedReport = {
+        ...selectedReport,
+        status: details.status,
+      };
+
+      setSelectedReport(updatedReport);
+      setReportActivities(details.activities || []);
+
+      // Update the locally stored report too.
+      await saveReport(updatedReport);
+
+      setReports((previous) =>
+        previous.map((report) =>
+          report.id === updatedReport.id ? updatedReport : report,
+        ),
+      );
+    } catch (error) {
+      console.error("Status update failed:", error);
+      setStatusError(error.message);
+    } finally {
+      setStatusLoading(false);
+    }
+  }
 
   return (
     <div className="app">
@@ -216,10 +280,7 @@ if (navigator.onLine) {
             <h1>Dashboard</h1>
           </div>
 
-          <button
-            className="primary-button"
-            onClick={() => setShowForm(true)}
-          >
+          <button className="primary-button" onClick={() => setShowForm(true)}>
             <Plus size={18} />
             New Report
           </button>
@@ -229,8 +290,7 @@ if (navigator.onLine) {
           <div>
             <h2>Field Reports Overview</h2>
             <p>
-              Monitor infrastructure issues and keep track of field
-              activities.
+              Monitor infrastructure issues and keep track of field activities.
             </p>
           </div>
           <div className="date-label">
@@ -269,9 +329,7 @@ if (navigator.onLine) {
               <AlertTriangle size={21} />
             </div>
             <p>Critical Issues</p>
-            <h3>
-              {reports.filter((r) => r.priority === "Critical").length}
-            </h3>
+            <h3>{reports.filter((r) => r.priority === "Critical").length}</h3>
           </div>
         </section>
 
@@ -335,7 +393,12 @@ if (navigator.onLine) {
                           )}
                         </div>
                         <div>
-                          <strong>{report.category}</strong>
+                          <button
+                            className="report-open-button"
+                            onClick={() => openReportDetails(report)}
+                          >
+                            {report.category}
+                          </button>
                           <span>{report.description}</span>
                         </div>
                       </div>
@@ -349,19 +412,25 @@ if (navigator.onLine) {
                     </td>
 
                     <td>
-                      <span className={`priority ${report.priority.toLowerCase()}`}>
+                      <span
+                        className={`priority ${report.priority.toLowerCase()}`}
+                      >
                         {report.priority}
                       </span>
                     </td>
 
                     <td>
-                      <span className={`status ${report.status.toLowerCase().replace(" ", "-")}`}>
+                      <span
+                        className={`status ${report.status.toLowerCase().replace(" ", "-")}`}
+                      >
                         {report.status}
                       </span>
                     </td>
 
                     <td>
-                      <span className={`sync ${report.syncStatus.toLowerCase()}`}>
+                      <span
+                        className={`sync ${report.syncStatus.toLowerCase()}`}
+                      >
                         {report.syncStatus}
                       </span>
                     </td>
@@ -468,6 +537,121 @@ if (navigator.onLine) {
             </div>
           </div>
         )}
+
+{selectedReport && (
+  <div className="modal-backdrop">
+    <div className="report-modal details-modal">
+      <div className="modal-heading">
+        <div>
+          <h2>Report Details</h2>
+          <p>Review the report and manage its progress.</p>
+        </div>
+
+        <button
+          className="close-button"
+          onClick={() => setSelectedReport(null)}
+          aria-label="Close details"
+        >
+          <X size={21} />
+        </button>
+      </div>
+
+      <div className="detail-content">
+        <div className="detail-item">
+          <span>Category</span>
+          <strong>{selectedReport.category}</strong>
+        </div>
+
+        <div className="detail-item">
+          <span>Description</span>
+          <strong>{selectedReport.description}</strong>
+        </div>
+
+        <div className="detail-item">
+          <span>Location</span>
+          <strong>{selectedReport.location}</strong>
+        </div>
+
+        <div className="detail-item">
+          <span>Priority</span>
+          <strong>{selectedReport.priority}</strong>
+        </div>
+
+        <div className="detail-item">
+          <span>Current status</span>
+          <strong>{selectedReport.status}</strong>
+        </div>
+
+        <div className="detail-item">
+          <span>Synchronization</span>
+          <strong>{selectedReport.syncStatus}</strong>
+        </div>
+      </div>
+
+      <div className="status-update">
+        <label htmlFor="status-select">
+          Update report status
+        </label>
+
+        <select
+          id="status-select"
+          value=""
+          onChange={handleStatusUpdate}
+          disabled={statusLoading}
+        >
+          <option value="">Choose next status</option>
+
+          {(
+            {
+              Submitted: ["Assigned", "Rejected"],
+              Assigned: ["In Progress", "Rejected"],
+              "In Progress": ["Resolved", "Rejected"],
+              Resolved: [],
+              Rejected: [],
+              Draft: [],
+            }[selectedReport.status] || []
+          ).map((status) => (
+            <option key={status} value={status}>
+              {status}
+            </option>
+          ))}
+        </select>
+
+        {statusLoading && <p>Updating status...</p>}
+        {statusError && (
+          <p className="error-message">{statusError}</p>
+        )}
+      </div>
+
+      <div className="activity-section">
+        <h3>Activity History</h3>
+
+        {reportActivities.length === 0 ? (
+          <p className="no-activities">
+            No server activity available.
+          </p>
+        ) : (
+          <div className="activity-list">
+            {reportActivities.map((activity) => (
+              <div className="activity-item" key={activity.id}>
+                <div className="activity-dot" />
+
+                <div>
+                  <strong>{activity.event_type}</strong>
+                  <p>{activity.description}</p>
+                  <span>
+                    {new Date(activity.created_at).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+)}
+
       </main>
     </div>
   );
