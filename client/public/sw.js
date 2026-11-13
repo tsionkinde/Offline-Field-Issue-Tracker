@@ -1,47 +1,44 @@
 
-const CACHE_NAME = "field-tracker-v2";
+const CACHE_NAME = "field-tracker-v3";
 
-// Install and cache the application shell and its assets.
 self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE_NAME);
 
-      // Download the application's HTML.
+      // Cache the application page.
+      await cache.add("/index.html");
+
+      // Cache all CSS and JavaScript assets.
       const response = await fetch("/index.html");
-      const html = await response.clone().text();
+      const html = await response.text();
 
-      // Save the HTML page.
-      await cache.put("/index.html", response);
-
-      // Find CSS and JavaScript files referenced by index.html.
-      const assetPaths = [
+      const assets = [
         ...html.matchAll(/(?:src|href)="([^"]+)"/g),
       ]
         .map((match) => match[1])
         .filter((path) => path.startsWith("/assets/"));
 
-      // Cache all generated CSS and JavaScript files.
-      await cache.addAll(assetPaths);
-
-      console.log("Application shell and assets cached.");
+      await cache.addAll(assets);
     })()
   );
 
   self.skipWaiting();
 });
 
-// Activate the new Service Worker.
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
-      const cacheNames = await caches.keys();
+      const keys = await caches.keys();
 
       await Promise.all(
-        cacheNames
-          .filter((name) => name.startsWith("field-tracker-") &&
-            name !== CACHE_NAME)
-          .map((name) => caches.delete(name))
+        keys
+          .filter(
+            (key) =>
+              key.startsWith("field-tracker-") &&
+              key !== CACHE_NAME
+          )
+          .map((key) => caches.delete(key))
       );
 
       await self.clients.claim();
@@ -49,12 +46,10 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// Handle application requests.
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
 
-  // Never intercept API requests or non-GET requests.
   if (
     request.method !== "GET" ||
     url.origin !== self.location.origin ||
@@ -63,42 +58,30 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Handle page navigation.
-  if (request.mode === "navigate") {
-    event.respondWith(
-      fetch(request)
-        .then((response) => response)
-        .catch(async () => {
-          return (
-            (await caches.match("/index.html")) ||
-            Response.error()
-          );
-        })
-    );
-
-    return;
-  }
-
-  // Serve cached assets first.
   event.respondWith(
-    caches.match(request).then(async (cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
+    (async () => {
+      const cached = await caches.match(request);
+
+      if (cached) return cached;
 
       try {
         const response = await fetch(request);
 
-        if (response.ok) {
+        if (response.ok && request.destination !== "document") {
           const cache = await caches.open(CACHE_NAME);
           await cache.put(request, response.clone());
         }
 
         return response;
       } catch (error) {
-        console.error("Offline request failed:", error);
+        if (request.mode === "navigate") {
+          return (
+            await caches.match("/index.html")
+          ) || Response.error();
+        }
+
         return Response.error();
       }
-    })
+    })()
   );
 });

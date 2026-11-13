@@ -132,3 +132,99 @@ test("GET /api/reports/:id should include activity history", async () => {
   );
 });
 
+// Test 8: Record a successful synchronization event.
+test("POST /api/reports/:id/activities should record SYNCED activity", async () => {
+  await request(app)
+    .post("/api/reports")
+    .send(validReport);
+
+  const response = await request(app)
+    .post(`/api/reports/${validReport.id}/activities`)
+    .send({
+      eventId: "550e8400-e29b-41d4-a716-446655440001",
+      eventType: "SYNCED",
+      description: "Report successfully synchronized with the server"
+    });
+
+  assert.strictEqual(response.status, 201);
+  assert.strictEqual(response.body.success, true);
+  assert.strictEqual(response.body.data.event_type, "SYNCED");
+});
+
+// Test 9: Record a failed synchronization event.
+test("POST /api/reports/:id/activities should record SYNC_FAILED activity", async () => {
+  await request(app)
+    .post("/api/reports")
+    .send(validReport);
+
+  const response = await request(app)
+    .post(`/api/reports/${validReport.id}/activities`)
+    .send({
+      eventId: "550e8400-e29b-41d4-a716-446655440002",
+      eventType: "SYNC_FAILED",
+      description: "Network connection failed during synchronization"
+    });
+
+  assert.strictEqual(response.status, 201);
+  assert.strictEqual(response.body.data.event_type, "SYNC_FAILED");
+});
+
+// Test 10: Prevent duplicate synchronization activities.
+test("POST /api/reports/:id/activities should prevent duplicate events", async () => {
+  await request(app)
+    .post("/api/reports")
+    .send(validReport);
+
+  const activity = {
+    eventId: "550e8400-e29b-41d4-a716-446655440003",
+    eventType: "SYNCED",
+    description: "Report successfully synchronized"
+  };
+
+  await request(app)
+    .post(`/api/reports/${validReport.id}/activities`)
+    .send(activity);
+
+  await request(app)
+    .post(`/api/reports/${validReport.id}/activities`)
+    .send(activity);
+
+  const response = await request(app)
+    .get(`/api/reports/${validReport.id}`);
+
+  // One CREATED activity + one SYNCED activity.
+  assert.strictEqual(response.body.data.activities.length, 2);
+});
+
+// Test 11: Reject invalid synchronization activity data.
+test("POST /api/reports/:id/activities should reject invalid data", async () => {
+  await request(app)
+    .post("/api/reports")
+    .send(validReport);
+
+  const response = await request(app)
+    .post(`/api/reports/${validReport.id}/activities`)
+    .send({
+      eventId: "not-a-valid-uuid",
+      eventType: "UNKNOWN",
+      description: ""
+    });
+
+  assert.strictEqual(response.status, 400);
+  assert.strictEqual(response.body.success, false);
+});
+
+// Test 12: Reject activities for reports that do not exist.
+test("POST /api/reports/:id/activities should return 404 for missing reports", async () => {
+  const response = await request(app)
+    .post("/api/reports/550e8400-e29b-41d4-a716-446655440099/activities")
+    .send({
+      eventId: "550e8400-e29b-41d4-a716-446655440004",
+      eventType: "SYNCED",
+      description: "Report successfully synchronized"
+    });
+
+  assert.strictEqual(response.status, 404);
+  assert.strictEqual(response.body.success, false);
+});
+

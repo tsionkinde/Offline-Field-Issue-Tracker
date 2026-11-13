@@ -49,4 +49,24 @@ db.exec(`
   );
 `);
 
+// Add event_key to existing databases without deleting old activity records.
+const activityColumns = db
+  .prepare("PRAGMA table_info(activities)")
+  .all();
+
+const hasEventKey = activityColumns.some(
+  (column) => column.name === "event_key"
+);
+
+if (!hasEventKey) {
+  db.exec("ALTER TABLE activities ADD COLUMN event_key TEXT");
+}
+
+// Prevent duplicate synchronization events.
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS
+  idx_activities_event_key
+  ON activities(event_key);
+`);
+
 module.exports = db;

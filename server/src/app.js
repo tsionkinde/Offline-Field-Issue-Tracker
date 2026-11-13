@@ -178,6 +178,65 @@ app.patch("/api/reports/:id/status", (req, res) => {
     });
   }
 
+app.post("/api/reports/:id/activities", (req, res) => {
+  const activitySchema = z.object({
+    eventId: z.string().uuid(),
+    eventType: z.enum(["SYNCED", "SYNC_FAILED"]),
+    description: z.string().trim().min(1),
+  });
+
+  const result = activitySchema.safeParse(req.body);
+
+  if (!result.success) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid synchronization activity data",
+      errors: result.error.flatten(),
+    });
+  }
+
+  const reportId = req.params.id;
+
+  const report = db
+    .prepare("SELECT id FROM reports WHERE id = ?")
+    .get(reportId);
+
+  if (!report) {
+    return res.status(404).json({
+      success: false,
+      message: "Report not found",
+    });
+  }
+
+  const { eventId, eventType, description } = result.data;
+
+  try {
+    // INSERT OR IGNORE prevents duplicate events during retries.
+    db.prepare(`
+      INSERT OR IGNORE INTO activities
+        (report_id, event_type, description, event_key)
+      VALUES (?, ?, ?, ?)
+    `).run(reportId, eventType, description, eventId);
+
+    const activity = db
+      .prepare("SELECT * FROM activities WHERE event_key = ?")
+      .get(eventId);
+
+    return res.status(201).json({
+      success: true,
+      data: activity,
+    });
+  } catch (error) {
+    console.error("Activity creation failed:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Could not save synchronization activity",
+    });
+  }
+});
+
+
   const allowed = allowedTransitions[report.status];
 
   if (!allowed || !allowed.includes(newStatus)) {
