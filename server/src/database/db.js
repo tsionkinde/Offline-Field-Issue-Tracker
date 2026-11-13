@@ -3,17 +3,20 @@ const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
 
-// Create a data folder if it does not exist.
-const dataDirectory = path.join(__dirname, "../../data");
+// Use a separate database for testing when DB_FILE is provided.
+const databasePath =
+  process.env.DB_FILE ||
+  path.join(__dirname, "../../data/field-issues.db");
+
+// Create the database folder if it does not exist.
+const dataDirectory = path.dirname(databasePath);
 
 if (!fs.existsSync(dataDirectory)) {
   fs.mkdirSync(dataDirectory, { recursive: true });
 }
 
 // Open or create the SQLite database.
-const db = new Database(
-  path.join(dataDirectory, "field-issues.db")
-);
+const db = new Database(databasePath);
 
 db.pragma("foreign_keys = ON");
 
